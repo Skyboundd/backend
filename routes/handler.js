@@ -199,6 +199,62 @@ const getUserStatus = async (request, h) => {
   }
 };
 
+// Roadmaps
+const sendRoadmap = async (request, h) => {
+  try {
+    const { title, description } = request.payload;
+
+    // Add roadmap to Firestore
+    const newRoadmap = await db.collection("roadmaps").add({
+      title,
+      description,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    return h
+      .response({ id: newRoadmap.id, message: "Roadmap created successfully" })
+      .code(201);
+  } catch (error) {
+    console.error("Error creating roadmap:", error);
+    return h.response({ error: "Unable to create roadmap" }).code(500);
+  }
+};
+
+// Course and Sub Course
+const getCourse = async (request, h) => {
+  try {
+    const { roadmapId } = request.params;
+    const courses = [];
+    const snapshot = await db
+      .collection("roadmaps")
+      .doc(roadmapId)
+      .collection("courses")
+      .get();
+    snapshot.forEach((doc) => {
+      courses.push({ id: doc.id, ...doc.data() });
+    });
+    return h.response(courses).code(200);
+  } catch (error) {
+    console.error("Error fetching courses:", error);
+    return h.response({ error: "Unable to fetch courses" }).code(500);
+  }
+};
+
+const getSubCourse = async (request, h) => {
+  try {
+    const { roadmapId, courseId } = request.params;
+    const subcourses = [];
+    const snapshot = await db.collection('roadmaps').doc(roadmapId).collection('courses').doc(courseId).collection('subcourses').get();
+    snapshot.forEach((doc) => {
+        subcourses.push({ id: doc.id, ...doc.data() });
+    });
+    return h.response(subcourses).code(200);
+} catch (error) {
+    console.error('Error fetching subcourses:', error);
+    return h.response({ error: 'Unable to fetch subcourses' }).code(500);
+}
+};
+
 module.exports = {
   deleteUser,
   registerUser,
@@ -206,4 +262,7 @@ module.exports = {
   loginUser,
   getUser,
   getUserStatus,
+  sendRoadmap,
+  getCourse,
+  getSubCourse,
 };
