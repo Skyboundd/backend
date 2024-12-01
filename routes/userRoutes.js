@@ -87,6 +87,12 @@ module.exports = [
 
     // Get Question
     {
-
+        method: 'GET',
+        path: '/roadmaps/{roadmapId}/courses/{courseId}/subcourses/{subcourseId}/questions',
+        options: 
+        {
+            pre: [{ method: verifyJwtToken }], // Apply JWT middleware
+        },
+        handler: getQuestion
     }
 ];

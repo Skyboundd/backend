@@ -201,23 +201,52 @@ const getUserStatus = async (request, h) => {
 
 // Roadmaps
 const sendRoadmap = async (request, h) => {
-  try {
-    const { title, description } = request.payload;
+        try {
+            const { roadmapId, deadline } = request.payload;
 
-    // Add roadmap to Firestore
-    const newRoadmap = await db.collection("roadmaps").add({
-      title,
-      description,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
+            // Fetch the roadmap details from Firestore
+            const roadmapDoc = await db.collection('roadmaps').doc(roadmapId).get();
 
-    return h
-      .response({ id: newRoadmap.id, message: "Roadmap created successfully" })
-      .code(201);
-  } catch (error) {
-    console.error("Error creating roadmap:", error);
-    return h.response({ error: "Unable to create roadmap" }).code(500);
-  }
+            if (!roadmapDoc.exists) {
+                return h.response({ error: 'Roadmap not found' }).code(404);
+            }
+
+            const roadmapData = roadmapDoc.data();
+
+            // Fetch the courses under the roadmap
+            const coursesSnapshot = await db
+                .collection('roadmaps')
+                .doc(roadmapId)
+                .collection('courses')
+                .get();
+
+            const listCourse = [];
+            coursesSnapshot.forEach((doc) => {
+                listCourse.push({ courseId: doc.id, title: doc.data().title });
+            });
+
+            // Calculate a sample score (e.g., percentage of completed courses)
+            const completedCourses = roadmapData.completedCourses || 0;
+            const totalCourses = listCourse.length;
+            const skor = totalCourses > 0 ? Math.floor((completedCourses / totalCourses) * 100) : 0;
+
+            // Determine if the roadmap is finished
+            const isFinish = completedCourses === totalCourses;
+
+            // Construct the response
+            const response = {
+                roadmapName: roadmapData.title,
+                listCourse: listCourse,
+                deadline: deadline,
+                skor: skor,
+                isFinish: isFinish,
+            };
+
+            return h.response(response).code(200);
+        } catch (error) {
+            console.error('Error processing roadmap:', error);
+            return h.response({ error: 'Unable to process roadmap' }).code(500);
+        }
 };
 
 // Course and Sub Course
