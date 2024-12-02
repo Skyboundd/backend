@@ -3,8 +3,12 @@ const admin = require("firebase-admin");
 const db = admin.firestore();
 const argon2 = require("argon2");
 const jwt = require("jsonwebtoken");
+const Joi = require('@hapi/joi');
+const sgMail = require('@sendgrid/mail');
 // Secret key for JWT (store this securely, e.g., in environment variables)
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
+
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
 // Authentication
 const registerUser = async (request, h) => {
@@ -47,6 +51,7 @@ const registerUser = async (request, h) => {
       completedCourses: 0, // No completed courses
       totalCourses: 0, // Total courses to be added later
       deadline: null, // No deadline initially
+      roadmaps: [], // Empty list of roadmaps
     });
 
     return h.response({ message: "User created successfully" }).code(201);
@@ -284,6 +289,90 @@ const getSubCourse = async (request, h) => {
 }
 };
 
+// OTP Handlers
+const requestOTP = async (request, h) => {
+  // Define the validation schema
+  const schema = Joi.object({
+      email: Joi.string().email().required(), // Ensure email is valid
+  });
+
+  // Validate the request payload
+  const { error, value } = schema.validate(request.payload);
+  if (error) {
+      return h.response({ error: 'Invalid email format' }).code(400);
+  }
+
+  const { email } = value; // Use validated email
+
+  try {
+      // Generate a random 6-digit OTP
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+      // Set OTP expiration time (e.g., 5 minutes)
+      const expiresAt = Date.now() + 5 * 60 * 1000;
+
+      // Save OTP in Firestore
+      await db.collection('otps').doc(email).set({
+          otp,
+          expiresAt,
+          verified: false,
+      });
+
+      // Prepare email
+      const msg = {
+          to: email,
+          from: process.env.EMAIL_FROM, // Your verified sender email
+          subject: 'Your OTP for Login',
+          text: `Your OTP is: ${otp}. It is valid for 5 minutes.`,
+          html: `<p>Your OTP is: <strong>${otp}</strong></p><p>It is valid for 5 minutes.</p>`,
+      };
+
+      // Send email using SendGrid
+      await sgMail.send(msg);
+
+      return h.response({ message: 'OTP sent successfully' }).code(200);
+  } catch (error) {
+      console.error('Error sending OTP:', error);
+      return h.response({ error: 'Unable to send OTP' }).code(500);
+  }
+};
+
+const verifyOTP = async (request, h) => {
+  try {
+    const { email, otp } = request.payload;
+
+    // Retrieve OTP data from Firestore
+    const otpDoc = await db.collection('otps').doc(email).get();
+
+    if (!otpDoc.exists) {
+        return h.response({ error: 'OTP not found' }).code(404);
+    }
+
+    const otpData = otpDoc.data();
+
+    // Check if the OTP is expired
+    if (Date.now() > otpData.expiresAt) {
+        return h.response({ error: 'OTP expired' }).code(400);
+    }
+
+    // Check if the OTP is correct
+    if (otp !== otpData.otp) {
+        return h.response({ error: 'Invalid OTP' }).code(401);
+    }
+
+    // Mark the OTP as verified
+    await db.collection('otps').doc(email).update({ verified: true });
+
+    // Generate a JWT token
+    const token = jwt.sign({ email }, JWT_SECRET, { expiresIn: '1h' });
+
+    return h.response({ token, message: 'Login successful' }).code(200);
+} catch (error) {
+    console.error('Error verifying OTP:', error);
+    return h.response({ error: 'Unable to verify OTP' }).code(500);
+}
+};
+
 module.exports = {
   deleteUser,
   registerUser,
@@ -294,4 +383,6 @@ module.exports = {
   sendRoadmap,
   getCourse,
   getSubCourse,
+  requestOTP,
+  verifyOTP
 };

@@ -12,6 +12,8 @@
   "description": "",
   "dependencies": {
     "@hapi/hapi": "^21.3.12",
+    "@hapi/joi": "^17.1.1",
+    "@sendgrid/mail": "^8.1.4",
     "argon2": "^0.41.1",
     "dotenv": "^16.4.5",
     "firebase-admin": "^13.0.1",
