@@ -3,8 +3,9 @@ const admin = require("firebase-admin");
 const db = admin.firestore();
 const argon2 = require("argon2");
 const jwt = require("jsonwebtoken");
-const Joi = require('@hapi/joi');
-const sgMail = require('@sendgrid/mail');
+const Joi = require("@hapi/joi");
+const sgMail = require("@sendgrid/mail");
+
 // Secret key for JWT (store this securely, e.g., in environment variables)
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 
@@ -114,12 +115,34 @@ const getAllUsers = async (request, h) => {
   try {
     const users = [];
     const snapshot = await db.collection("users").get();
-    snapshot.forEach((doc) => {
-      users.push({ id: doc.id, ...doc.data() });
-    });
+
+    // Iterate through all users
+    for (const doc of snapshot.docs) {
+      const userData = { id: doc.id, ...doc.data() };
+
+      // Fetch roadmaps subcollection for the user
+      const roadmapsSnapshot = await db
+        .collection("users")
+        .doc(doc.id)
+        .collection("roadmaps")
+        .get();
+
+      // Extract roadmaps into an array
+      const roadmaps = [];
+      roadmapsSnapshot.forEach((roadmapDoc) => {
+        roadmaps.push({ id: roadmapDoc.id, ...roadmapDoc.data() });
+      });
+
+      // Include roadmaps in user data
+      userData.roadmaps = roadmaps;
+
+      // Add the user data to the users array
+      users.push(userData);
+    }
+
     return h.response(users).code(200);
   } catch (error) {
-    console.error(error);
+    console.error("Error fetching users:", error);
     return h.response({ error: "Unable to fetch users" }).code(500);
   }
 };
@@ -137,18 +160,33 @@ const getUser = async (request, h) => {
       return h.response({ error: "User not found" }).code(404);
     }
 
-    // Extract user data
+    // Extract user data (exclude password)
     const userData = userDoc.data();
     const response = {
       username: userData.username,
       email: userData.email,
       status: userData.status,
-      roadmap: userData.roadmap,
       gender: userData.gender,
       phoneNumber: userData.phoneNumber,
       dateOfBirth: userData.dateOfBirth,
       userPoint: userData.userPoint,
     };
+
+    // Fetch roadmaps subcollection
+    const roadmapsSnapshot = await db
+      .collection("users")
+      .doc(userId)
+      .collection("roadmaps")
+      .get();
+
+    // Extract roadmaps
+    const roadmaps = [];
+    roadmapsSnapshot.forEach((doc) => {
+      roadmaps.push({ id: doc.id, ...doc.data() });
+    });
+
+    // Add roadmaps to response
+    response.roadmaps = roadmaps;
 
     return h.response(response).code(200);
   } catch (error) {
@@ -206,52 +244,55 @@ const getUserStatus = async (request, h) => {
 
 // Roadmaps
 const sendRoadmap = async (request, h) => {
-        try {
-            const { roadmapId, deadline } = request.payload;
+  try {
+    const { roadmapId, deadline } = request.payload;
 
-            // Fetch the roadmap details from Firestore
-            const roadmapDoc = await db.collection('roadmaps').doc(roadmapId).get();
+    // Fetch the roadmap details from Firestore
+    const roadmapDoc = await db.collection("roadmaps").doc(roadmapId).get();
 
-            if (!roadmapDoc.exists) {
-                return h.response({ error: 'Roadmap not found' }).code(404);
-            }
+    if (!roadmapDoc.exists) {
+      return h.response({ error: "Roadmap not found" }).code(404);
+    }
 
-            const roadmapData = roadmapDoc.data();
+    const roadmapData = roadmapDoc.data();
 
-            // Fetch the courses under the roadmap
-            const coursesSnapshot = await db
-                .collection('roadmaps')
-                .doc(roadmapId)
-                .collection('courses')
-                .get();
+    // Fetch the courses under the roadmap
+    const coursesSnapshot = await db
+      .collection("roadmaps")
+      .doc(roadmapId)
+      .collection("courses")
+      .get();
 
-            const listCourse = [];
-            coursesSnapshot.forEach((doc) => {
-                listCourse.push({ courseId: doc.id, title: doc.data().title });
-            });
+    const listCourse = [];
+    coursesSnapshot.forEach((doc) => {
+      listCourse.push({ courseId: doc.id, title: doc.data().title });
+    });
 
-            // Calculate a sample score (e.g., percentage of completed courses)
-            const completedCourses = roadmapData.completedCourses || 0;
-            const totalCourses = listCourse.length;
-            const skor = totalCourses > 0 ? Math.floor((completedCourses / totalCourses) * 100) : 0;
+    // Calculate a sample score (e.g., percentage of completed courses)
+    const completedCourses = roadmapData.completedCourses || 0;
+    const totalCourses = listCourse.length;
+    const skor =
+      totalCourses > 0
+        ? Math.floor((completedCourses / totalCourses) * 100)
+        : 0;
 
-            // Determine if the roadmap is finished
-            const isFinish = completedCourses === totalCourses;
+    // Determine if the roadmap is finished
+    const isFinish = completedCourses === totalCourses;
 
-            // Construct the response
-            const response = {
-                roadmapName: roadmapData.title,
-                listCourse: listCourse,
-                deadline: deadline,
-                skor: skor,
-                isFinish: isFinish,
-            };
+    // Construct the response
+    const response = {
+      roadmapName: roadmapData.title,
+      listCourse: listCourse,
+      deadline: deadline,
+      skor: skor,
+      isFinish: isFinish,
+    };
 
-            return h.response(response).code(200);
-        } catch (error) {
-            console.error('Error processing roadmap:', error);
-            return h.response({ error: 'Unable to process roadmap' }).code(500);
-        }
+    return h.response(response).code(200);
+  } catch (error) {
+    console.error("Error processing roadmap:", error);
+    return h.response({ error: "Unable to process roadmap" }).code(500);
+  }
 };
 
 // Course and Sub Course
@@ -278,62 +319,68 @@ const getSubCourse = async (request, h) => {
   try {
     const { roadmapId, courseId } = request.params;
     const subcourses = [];
-    const snapshot = await db.collection('roadmaps').doc(roadmapId).collection('courses').doc(courseId).collection('subcourses').get();
+    const snapshot = await db
+      .collection("roadmaps")
+      .doc(roadmapId)
+      .collection("courses")
+      .doc(courseId)
+      .collection("subcourses")
+      .get();
     snapshot.forEach((doc) => {
-        subcourses.push({ id: doc.id, ...doc.data() });
+      subcourses.push({ id: doc.id, ...doc.data() });
     });
     return h.response(subcourses).code(200);
-} catch (error) {
-    console.error('Error fetching subcourses:', error);
-    return h.response({ error: 'Unable to fetch subcourses' }).code(500);
-}
+  } catch (error) {
+    console.error("Error fetching subcourses:", error);
+    return h.response({ error: "Unable to fetch subcourses" }).code(500);
+  }
 };
 
 // OTP Handlers
 const requestOTP = async (request, h) => {
   // Define the validation schema
   const schema = Joi.object({
-      email: Joi.string().email().required(), // Ensure email is valid
+    email: Joi.string().email().required(), // Ensure email is valid
   });
 
   // Validate the request payload
   const { error, value } = schema.validate(request.payload);
   if (error) {
-      return h.response({ error: 'Invalid email format' }).code(400);
+    return h.response({ error: "Invalid email format" }).code(400);
   }
 
   const { email } = value; // Use validated email
 
   try {
-      // Generate a random 6-digit OTP
-      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    // Generate a random 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-      // Set OTP expiration time (e.g., 5 minutes)
-      const expiresAt = Date.now() + 5 * 60 * 1000;
+    // Set OTP expiration time (e.g., 5 minutes)
+    const expiresAt = Date.now() + 5 * 60 * 1000;
 
-      // Save OTP in Firestore
-      await db.collection('otps').doc(email).set({
-          otp,
-          expiresAt,
-          verified: false,
-      });
+    // Save OTP in Firestore
+    await db.collection("otps").doc(email).set({
+      otp,
+      expiresAt,
+      verified: false,
+    });
 
-      // Prepare email
-      const msg = {
-          to: email,
-          from: process.env.EMAIL_FROM, // Your verified sender email
-          subject: 'Your OTP for Login',
-          text: `Your OTP is: ${otp}. It is valid for 5 minutes.`,
-          html: `<p>Your OTP is: <strong>${otp}</strong></p><p>It is valid for 5 minutes.</p>`,
-      };
+    // Prepare email
+    const msg = {
+      to: email,
+      from: process.env.EMAIL_FROM, // Your verified sender email
+      subject: "Your OTP for Login",
+      text: `Your OTP is: ${otp}. It is valid for 5 minutes.`,
+      html: `<p>Your OTP is: <strong>${otp}</strong></p><p>It is valid for 5 minutes.</p>`,
+    };
 
-      // Send email using SendGrid
-      await sgMail.send(msg);
+    // Send email using SendGrid
+    await sgMail.send(msg);
 
-      return h.response({ message: 'OTP sent successfully' }).code(200);
+    return h.response({ message: "OTP sent successfully" }).code(200);
   } catch (error) {
-      console.error('Error sending OTP:', error);
-      return h.response({ error: 'Unable to send OTP' }).code(500);
+    console.error("Error sending OTP:", error);
+    return h.response({ error: "Unable to send OTP" }).code(500);
   }
 };
 
@@ -342,35 +389,104 @@ const verifyOTP = async (request, h) => {
     const { email, otp } = request.payload;
 
     // Retrieve OTP data from Firestore
-    const otpDoc = await db.collection('otps').doc(email).get();
+    const otpDoc = await db.collection("otps").doc(email).get();
 
     if (!otpDoc.exists) {
-        return h.response({ error: 'OTP not found' }).code(404);
+      return h.response({ error: "OTP not found" }).code(404);
     }
 
     const otpData = otpDoc.data();
 
     // Check if the OTP is expired
     if (Date.now() > otpData.expiresAt) {
-        return h.response({ error: 'OTP expired' }).code(400);
+      return h.response({ error: "OTP expired" }).code(400);
     }
 
     // Check if the OTP is correct
     if (otp !== otpData.otp) {
-        return h.response({ error: 'Invalid OTP' }).code(401);
+      return h.response({ error: "Invalid OTP" }).code(401);
     }
 
     // Mark the OTP as verified
-    await db.collection('otps').doc(email).update({ verified: true });
+    await db.collection("otps").doc(email).update({ verified: true });
 
     // Generate a JWT token
-    const token = jwt.sign({ email }, JWT_SECRET, { expiresIn: '1h' });
+    const token = jwt.sign({ email }, JWT_SECRET, { expiresIn: "1h" });
 
-    return h.response({ token, message: 'Login successful' }).code(200);
-} catch (error) {
-    console.error('Error verifying OTP:', error);
-    return h.response({ error: 'Unable to verify OTP' }).code(500);
-}
+    return h.response({ token, message: "Login successful" }).code(200);
+  } catch (error) {
+    console.error("Error verifying OTP:", error);
+    return h.response({ error: "Unable to verify OTP" }).code(500);
+  }
+};
+
+// Quesioner
+const sendQuesioner = async (request, h) => {
+  const schema = Joi.object({
+    roadmapName: Joi.string().min(1).required(),
+  });
+
+  const { error, value } = schema.validate(request.payload);
+  if (error) {
+    return h.response({ error: error.details[0].message }).code(400);
+  }
+
+  const { roadmapName } = value;
+
+  try {
+    const userId = request.user.id;
+    const userRef = db.collection("users").doc(userId);
+
+    // Step 1: Check if the roadmap already exists
+    const roadmapsSnapshot = await userRef
+      .collection("roadmaps")
+      .where("roadmapName", "==", roadmapName)
+      .get();
+
+    if (!roadmapsSnapshot.empty) {
+      return h.response({ error: "Roadmap already exists" }).code(400);
+    }
+
+    // Step 2: Add the new roadmap
+    await userRef.collection("roadmaps").add({
+      roadmapName,
+      addedAt: new Date().toISOString(),
+    });
+
+    return h.response({ message: "Roadmap added successfully" }).code(201);
+  } catch (error) {
+    console.error("Error adding roadmap:", error);
+    return h.response({ error: "Unable to add roadmap" }).code(500);
+  }
+};
+
+// Delete Roadmap
+const deleteRoadmap = async (request, h) => {
+  try {
+    const userId = request.user.id; // Authenticated user's ID
+    const { roadmapName } = request.params; // Roadmap ID from the path
+
+    // Reference the user's roadmaps subcollection
+    const roadmapRef = db
+      .collection("users")
+      .doc(userId)
+      .collection("roadmaps")
+      .doc(roadmapName);
+
+    // Check if the roadmap exists
+    const roadmapDoc = await roadmapRef.get();
+    if (!roadmapDoc.exists) {
+      return h.response({ error: "Roadmap not found" }).code(404);
+    }
+
+    // Delete the roadmap
+    await roadmapRef.delete();
+
+    return h.response({ message: "Roadmap deleted successfully" }).code(200);
+  } catch (error) {
+    console.error("Error deleting roadmap:", error);
+    return h.response({ error: "Unable to delete roadmap" }).code(500);
+  }
 };
 
 module.exports = {
@@ -384,5 +500,7 @@ module.exports = {
   getCourse,
   getSubCourse,
   requestOTP,
-  verifyOTP
+  verifyOTP,
+  sendQuesioner,
+  deleteRoadmap,
 };

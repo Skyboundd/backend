@@ -1,4 +1,4 @@
-const { deleteUser, registerUser, getAllUsers, loginUser, getUser, getUserStatus, sendRoadmap, getCourse, getSubCourse, requestOTP, verifyOTP } = require('./handler');
+const { deleteUser, registerUser, getAllUsers, loginUser, getUser, getUserStatus, sendRoadmap, getCourse, getSubCourse, requestOTP, verifyOTP, sendQuesioner, deleteRoadmap } = require('./handler');
 const { verifyJwtToken } = require('../middlewares/authMiddleware');
 
 module.exports = [
@@ -6,6 +6,10 @@ module.exports = [
     {
         method: 'GET',
         path: '/users',
+        options:
+        {
+            pre: [{ method: verifyJwtToken }], // Apply JWT middleware
+        },
         handler: getAllUsers
     },
 
@@ -97,16 +101,39 @@ module.exports = [
     },
     */
    
-    // OTP Verification
+    // OTP Request
     {
         method: 'POST',
         path: '/login/requestOTP',
         handler: requestOTP   
     },
 
+    // OTP Verification
     {
         method: 'POST',
         path: '/login/verifyOTP',
         handler: verifyOTP
-    }
+    },
+
+    // Post User Roamap
+    {
+        method: 'POST',
+        path: '/user/roadmap',
+        options: 
+        {
+            pre: [{ method: verifyJwtToken }], // Apply JWT middleware
+        },
+        handler: sendQuesioner
+    },
+
+    // Delete User Roamap
+    {
+        method: 'DELETE',
+        path: '/user/roadmap/{roadmapId}',
+        options: 
+        {
+            pre: [{ method: verifyJwtToken }], // Apply JWT middleware
+        },
+        handler: deleteRoadmap
+    },
 ];
