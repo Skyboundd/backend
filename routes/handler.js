@@ -88,7 +88,7 @@ const loginUser = async (request, h) => {
     const token = jwt.sign(
       { id: userSnapshot.docs[0].id, email: user.email },
       JWT_SECRET,
-      { expiresIn: "1h" } // Token expires in 1 hour
+      { expiresIn: "168h" } // Token expires in 1 hour
     );
 
     return h.response({ token, message: "Login successful" }).code(200);
@@ -214,6 +214,7 @@ const getUserStatus = async (request, h) => {
     const totalCourses = userData.totalCourses || 0;
     const completedCourses = userData.completedCourses || 0;
     const coursesLeft = totalCourses - completedCourses;
+    const userPercentage = ((totalCourses - coursesLeft) / totalCourses) * 100;
 
     // Calculate days left until the deadline
     const deadlineTimestamp = userData.deadline || null; // Assume this is a Firestore timestamp
@@ -233,6 +234,7 @@ const getUserStatus = async (request, h) => {
       userStreak: userData.userStreak || 0,
       coursesLeft: coursesLeft,
       deadlineLeft: deadlineLeft,
+      userPercentage: userPercentage,
     };
 
     return h.response(response).code(200);
