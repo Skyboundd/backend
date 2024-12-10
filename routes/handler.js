@@ -245,9 +245,10 @@ const getUserStatus = async (request, h) => {
 };
 
 // Roadmaps
-const sendRoadmap = async (request, h) => {
+const assignAndSendRoadmap = async (request, h) => {
   try {
     const { roadmapId, deadline } = request.payload;
+    const userId = request.user.id;
 
     // Fetch the roadmap details from Firestore
     const roadmapDoc = await db.collection("roadmaps").doc(roadmapId).get();
@@ -258,36 +259,66 @@ const sendRoadmap = async (request, h) => {
 
     const roadmapData = roadmapDoc.data();
 
-    // Fetch the courses under the roadmap
-    const coursesSnapshot = await db
-      .collection("roadmaps")
-      .doc(roadmapId)
-      .collection("courses")
-      .get();
+    // Extract courses and subcourses
+    const courses = roadmapData.learningTopics.map((topic) => ({
+      courseName: topic.name,
+      subcourses: topic.subTopics.map((sub) => ({
+        subcourseName: sub.name,
+        difficultyLevel: sub.difficultyLevel,
+        learningOrder: sub.learningOrder,
+      })),
+    }));
 
-    const listCourse = [];
-    coursesSnapshot.forEach((doc) => {
-      listCourse.push({ courseId: doc.id, title: doc.data().title });
-    });
+    // Construct the roadmap data to store in the user document
+    const roadmapEntry = {
+      roadmapId,
+      jobRole: roadmapData.jobRole,
+      courses: courses, // Each course contains its subcourses
+      deadline: deadline || null,
+    };
 
-    // Calculate a sample score (e.g., percentage of completed courses)
-    const completedCourses = roadmapData.completedCourses || 0;
-    const totalCourses = listCourse.length;
-    const skor =
-      totalCourses > 0
-        ? Math.floor((completedCourses / totalCourses) * 100)
-        : 0;
+    // Reference the user document
+    const userRef = db.collection("users").doc(userId);
+    const userDoc = await userRef.get();
 
-    // Determine if the roadmap is finished
-    const isFinish = completedCourses === totalCourses;
+    if (userDoc.exists) {
+      const userData = userDoc.data();
 
-    // Construct the response
+      // Check if the roadmap is already assigned
+      if (
+        userData.roadmaps &&
+        userData.roadmaps.some((roadmap) => roadmap.roadmapId === roadmapId)
+      ) {
+        return h
+          .response({ error: "Roadmap is already assigned to the user" })
+          .code(400);
+      }
+
+      // Add the roadmap to the existing roadmaps array
+      await userRef.update({
+        roadmaps: [...userData.roadmaps, roadmapEntry],
+      });
+    } else {
+      // Create a new user document with the roadmap
+      await userRef.set({
+        roadmaps: [roadmapEntry],
+      });
+    }
+
+    // Prepare the response with the nested structure
     const response = {
-      roadmapName: roadmapData.title,
-      listCourse: listCourse,
-      deadline: deadline,
-      skor: skor,
-      isFinish: isFinish,
+      roadmaps: [
+        {
+          roadmapId,
+          courses: courses.map((course) => ({
+            courseName: course.courseName,
+            subcourses: course.subcourses.map((sub) => ({
+              subcourseName: sub.subcourseName,
+            })),
+          })),
+        },
+      ],
+      message: "Roadmap, courses, and subcourses assigned successfully.",
     };
 
     return h.response(response).code(200);
@@ -297,44 +328,78 @@ const sendRoadmap = async (request, h) => {
   }
 };
 
-// Course and Sub Course
-const getCourse = async (request, h) => {
+// User's Course and Sub Course
+const getUserCourses = async (request, h) => {
   try {
-    const { roadmapId } = request.params;
-    const courses = [];
-    const snapshot = await db
-      .collection("roadmaps")
-      .doc(roadmapId)
-      .collection("courses")
-      .get();
-    snapshot.forEach((doc) => {
-      courses.push({ id: doc.id, ...doc.data() });
-    });
-    return h.response(courses).code(200);
+    const userId = request.user.id; // Extract userId from token
+
+    // Fetch the user document from Firestore
+    const userDoc = await db.collection("users").doc(userId).get();
+
+    if (!userDoc.exists) {
+      return h.response({ error: "User not found" }).code(404);
+    }
+
+    const userData = userDoc.data();
+
+    if (!userData.roadmaps || userData.roadmaps.length === 0) {
+      return h
+        .response({ error: "No roadmaps assigned to the user" })
+        .code(404);
+    }
+
+    // Extract courses from all assigned roadmaps
+    const courses = userData.roadmaps.flatMap((roadmap) =>
+      roadmap.courses.map((course) => ({
+        courseName: course.courseName,
+      }))
+    );
+
+    return h.response({ courses }).code(200);
   } catch (error) {
-    console.error("Error fetching courses:", error);
-    return h.response({ error: "Unable to fetch courses" }).code(500);
+    console.error("Error fetching user courses:", error);
+    return h.response({ error: "Unable to fetch user courses" }).code(500);
   }
 };
 
-const getSubCourse = async (request, h) => {
+const getUserSubCourse = async (request, h) => {
   try {
-    const { roadmapId, courseId } = request.params;
-    const subcourses = [];
-    const snapshot = await db
-      .collection("roadmaps")
-      .doc(roadmapId)
-      .collection("courses")
-      .doc(courseId)
-      .collection("subcourses")
-      .get();
-    snapshot.forEach((doc) => {
-      subcourses.push({ id: doc.id, ...doc.data() });
-    });
-    return h.response(subcourses).code(200);
+    const userId = request.user.id; // Extract userId from token
+    const { roadmapId } = request.params;
+
+    // Fetch the user document from Firestore
+    const userDoc = await db.collection("users").doc(userId).get();
+
+    if (!userDoc.exists) {
+      return h.response({ error: "User not found" }).code(404);
+    }
+
+    const userData = userDoc.data();
+
+    if (!userData.roadmaps || userData.roadmaps.length === 0) {
+      return h
+        .response({ error: "No roadmaps assigned to the user" })
+        .code(404);
+    }
+
+    // Find the specific roadmap
+    const roadmap = userData.roadmaps.find((r) => r.roadmapId === roadmapId);
+
+    if (!roadmap) {
+      return h.response({ error: "Roadmap not found for the user" }).code(404);
+    }
+
+    // Extract subcourses from the roadmap's courses
+    const subcourses = roadmap.courses.flatMap((course) =>
+      course.subcourses.map((subcourse) => ({
+        subcourseName: subcourse.subcourseName,
+      }))
+    );
+
+    return h.response({ subcourses }).code(200);
   } catch (error) {
-    console.error("Error fetching subcourses:", error);
-    return h.response({ error: "Unable to fetch subcourses" }).code(500);
+    console.error("Error fetching user subcourses:", error);
+    return h.response({ error: "Unable to fetch user subcourses" }).code(500);
   }
 };
 
@@ -463,31 +528,45 @@ const sendQuesioner = async (request, h) => {
 };
 
 // Delete Roadmap
-const deleteRoadmap = async (request, h) => {
+const deleteUserRoadmap = async (request, h) => {
   try {
-    const userId = request.user.id; // Authenticated user's ID
-    const { roadmapName } = request.params; // Roadmap ID from the path
+    const { roadmapId } = request.payload; // Roadmap ID from the request payload
+    const userId = request.user.id; // User ID from the token
 
-    // Reference the user's roadmaps subcollection
-    const roadmapRef = db
-      .collection("users")
-      .doc(userId)
-      .collection("roadmaps")
-      .doc(roadmapName);
-
-    // Check if the roadmap exists
-    const roadmapDoc = await roadmapRef.get();
-    if (!roadmapDoc.exists) {
-      return h.response({ error: "Roadmap not found" }).code(404);
+    // Validate inputs
+    if (
+      !roadmapId ||
+      typeof roadmapId !== "string" ||
+      roadmapId.trim() === ""
+    ) {
+      return h.response({ error: "Invalid roadmapId provided." }).code(400);
     }
 
-    // Delete the roadmap
-    await roadmapRef.delete();
+    // Reference the user document in Firestore
+    const userRef = db.collection("users").doc(userId);
+    const userDoc = await userRef.get();
 
-    return h.response({ message: "Roadmap deleted successfully" }).code(200);
+    // Check if the user exists
+    if (!userDoc.exists) {
+      return h.response({ error: "User not found." }).code(404);
+    }
+
+    const userData = userDoc.data();
+    const { roadmaps } = userData;
+
+    // Check if the user has the roadmap assigned
+    if (!roadmaps || !roadmaps.includes(roadmapId)) {
+      return h.response({ error: "Roadmap not found in user data." }).code(404);
+    }
+
+    // Remove the roadmap from the roadmaps array
+    const updatedRoadmaps = roadmaps.filter((id) => id !== roadmapId);
+    await userRef.update({ roadmaps: updatedRoadmaps });
+
+    return h.response({ message: "Roadmap deleted successfully." }).code(200);
   } catch (error) {
     console.error("Error deleting roadmap:", error);
-    return h.response({ error: "Unable to delete roadmap" }).code(500);
+    return h.response({ error: "Unable to delete roadmap." }).code(500);
   }
 };
 
@@ -498,11 +577,11 @@ module.exports = {
   loginUser,
   getUser,
   getUserStatus,
-  sendRoadmap,
-  getCourse,
-  getSubCourse,
+  assignAndSendRoadmap,
+  getUserCourses,
+  getUserSubCourse,
   requestOTP,
   verifyOTP,
   sendQuesioner,
-  deleteRoadmap,
+  deleteUserRoadmap,
 };

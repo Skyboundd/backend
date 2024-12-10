@@ -1,4 +1,4 @@
-const { deleteUser, registerUser, getAllUsers, loginUser, getUser, getUserStatus, sendRoadmap, getCourse, getSubCourse, requestOTP, verifyOTP, sendQuesioner, deleteRoadmap } = require('./handler');
+const { deleteUser, registerUser, getAllUsers, loginUser, getUser, getUserStatus, assignAndSendRoadmap, getUserCourses, getUserSubCourse, requestOTP, verifyOTP, sendQuesioner, deleteUserRoadmap } = require('./handler');
 const { verifyJwtToken } = require('../middlewares/authMiddleware');
 
 module.exports = [
@@ -59,34 +59,34 @@ module.exports = [
     // Send a Roadmap
     {
         method: 'POST',
-        path: '/roadmap',
+        path: '/users/roadmaps',
         options: 
         {
             pre: [{ method: verifyJwtToken }], // Apply JWT middleware
         },
-        handler: sendRoadmap
+        handler: assignAndSendRoadmap
     },
 
-    // Get a Course
+    // Get a Course assigned to User
     {
         method: 'GET',
-        path: '/roadmaps/{roadmapId}/courses',
+        path: '/users/courses',
         options: 
         {
             pre: [{ method: verifyJwtToken }], // Apply JWT middleware
         },
-        handler: getCourse
+        handler: getUserCourses
     },
 
-    // Get a Sub Course
+    // Get a Sub Course assigned to User
     {
         method: 'GET',
-        path: '/roadmaps/{roadmapId}/courses/{courseId}/subcourses',
+        path: '/users/roadmaps/{roadmapId}/courses',
         options: 
         {
             pre: [{ method: verifyJwtToken }], // Apply JWT middleware
         },
-        handler: getSubCourse
+        handler: getUserSubCourse
     },
 
     /* Get Question
@@ -115,7 +115,7 @@ module.exports = [
         handler: verifyOTP
     },
 
-    // Post User Roamap
+    // Post User Roadmap
     {
         method: 'POST',
         path: '/user/roadmap',
@@ -126,15 +126,22 @@ module.exports = [
         handler: sendQuesioner
     },
 
-    // Delete User Roamap
+    // Delete User Roadmap
     {
         method: 'DELETE',
-        path: '/user/roadmap/{roadmapId}',
+        path: '/users/roadmaps',
         options: 
         {
             pre: [{ method: verifyJwtToken }], // Apply JWT middleware
         },
-        handler: deleteRoadmap
+        handler: deleteUserRoadmap
     },
+
+    // Get All Roadmaps from roadmaps collection
+    {
+        method: 'GET',
+        path: '/roadmaps',
+        
+    }
 ];
 
