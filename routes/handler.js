@@ -88,7 +88,7 @@ const loginUser = async (request, h) => {
     const token = jwt.sign(
       { id: userSnapshot.docs[0].id, email: user.email },
       JWT_SECRET,
-      { expiresIn: "168h" } // Token expires in 1 hour
+      { expiresIn: "168h" } // Token expires in 1 week
     );
 
     return h.response({ token, message: "Login successful" }).code(200);
@@ -170,23 +170,8 @@ const getUser = async (request, h) => {
       phoneNumber: userData.phoneNumber,
       dateOfBirth: userData.dateOfBirth,
       userPoint: userData.userPoint,
+      roadmaps: userData.roadmaps.map((roadmap) => roadmap.roadmapId).join(","),
     };
-
-    // Fetch roadmaps subcollection
-    const roadmapsSnapshot = await db
-      .collection("users")
-      .doc(userId)
-      .collection("roadmaps")
-      .get();
-
-    // Extract roadmaps
-    const roadmaps = [];
-    roadmapsSnapshot.forEach((doc) => {
-      roadmaps.push({ id: doc.id, ...doc.data() });
-    });
-
-    // Add roadmaps to response
-    response.roadmaps = roadmaps;
 
     return h.response(response).code(200);
   } catch (error) {
@@ -422,8 +407,8 @@ const requestOTP = async (request, h) => {
     // Generate a random 6-digit OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // Set OTP expiration time (e.g., 5 minutes)
-    const expiresAt = Date.now() + 5 * 60 * 1000;
+    // Set OTP expiration time (e.g., 10 minutes)
+    const expiresAt = Date.now() + 10 * 60 * 1000;
 
     // Save OTP in Firestore
     await db.collection("otps").doc(email).set({
@@ -437,8 +422,8 @@ const requestOTP = async (request, h) => {
       to: email,
       from: process.env.EMAIL_FROM, // Your verified sender email
       subject: "Your OTP for Login",
-      text: `Your OTP is: ${otp}. It is valid for 5 minutes.`,
-      html: `<p>Your OTP is: <strong>${otp}</strong></p><p>It is valid for 5 minutes.</p>`,
+      text: `Your OTP is: ${otp}. It is valid for 10 minutes.`,
+      html: `<p>Your OTP is: <strong>${otp}</strong></p><p>It is valid for 10 minutes.</p>`,
     };
 
     // Send email using SendGrid
@@ -478,7 +463,7 @@ const verifyOTP = async (request, h) => {
     await db.collection("otps").doc(email).update({ verified: true });
 
     // Generate a JWT token
-    const token = jwt.sign({ email }, JWT_SECRET, { expiresIn: "1h" });
+    const token = jwt.sign({ email }, JWT_SECRET, { expiresIn: "168h" });
 
     return h.response({ token, message: "Login successful" }).code(200);
   } catch (error) {
@@ -504,26 +489,57 @@ const sendQuesioner = async (request, h) => {
     const userId = request.user.id;
     const userRef = db.collection("users").doc(userId);
 
-    // Step 1: Check if the roadmap already exists
-    const roadmapsSnapshot = await userRef
-      .collection("roadmaps")
-      .where("roadmapName", "==", roadmapName)
-      .get();
-
-    if (!roadmapsSnapshot.empty) {
-      return h.response({ error: "Roadmap already exists" }).code(400);
+    // Step 1: Check if the roadmap already exists for the user
+    const userDoc = await userRef.get();
+    if (!userDoc.exists) {
+      return h.response({ error: "User not found." }).code(404);
     }
 
-    // Step 2: Add the new roadmap
-    await userRef.collection("roadmaps").add({
+    const userData = userDoc.data();
+    const existingRoadmaps = userData.roadmaps || [];
+    if (existingRoadmaps.some((r) => r.roadmapName === roadmapName)) {
+      return h.response({ error: "Roadmap already exists." }).code(400);
+    }
+
+    // Step 2: Fetch the roadmap details from the global roadmaps collection
+    const roadmapSnapshot = await db
+      .collection("roadmaps")
+      .where("jobRole", "==", roadmapName)
+      .get();
+
+    if (roadmapSnapshot.empty) {
+      return h.response({ error: "Roadmap not found." }).code(404);
+    }
+
+    const roadmapDoc = roadmapSnapshot.docs[0]; // Assuming roadmap names are unique
+    const roadmapData = roadmapDoc.data();
+
+    // Step 3: Extract courses and subcourses (including descriptions)
+    const courses = roadmapData.learningTopics.map((topic) => ({
+      courseName: topic.name,
+      subcourses: topic.subTopics.map((sub) => ({
+        subcourseName: sub.name,
+        description: sub.description, // Include description
+        difficultyLevel: sub.difficultyLevel || null,
+        learningOrder: sub.learningOrder || null,
+      })),
+    }));
+
+    // Step 4: Add the roadmap (including courses and subcourses) to the user's roadmaps field
+    const newRoadmap = {
       roadmapName,
       addedAt: new Date().toISOString(),
+      courses, // Nested structure with courses and subcourses
+    };
+
+    await userRef.update({
+      roadmaps: [...existingRoadmaps, newRoadmap], // Append the new roadmap
     });
 
-    return h.response({ message: "Roadmap added successfully" }).code(201);
+    return h.response({ message: "Roadmap added successfully." }).code(201);
   } catch (error) {
     console.error("Error adding roadmap:", error);
-    return h.response({ error: "Unable to add roadmap" }).code(500);
+    return h.response({ error: "Unable to add roadmap." }).code(500);
   }
 };
 
@@ -555,18 +571,81 @@ const deleteUserRoadmap = async (request, h) => {
     const { roadmaps } = userData;
 
     // Check if the user has the roadmap assigned
-    if (!roadmaps || !roadmaps.includes(roadmapId)) {
+    if (!roadmaps || roadmaps.length === 0) {
+      return h.response({ error: "No roadmaps assigned to the user." }).code(404);
+    }
+
+    // Find the roadmap in the array
+    const roadmapExists = roadmaps.some((roadmap) => roadmap.roadmapId === roadmapId);
+
+    if (!roadmapExists) {
       return h.response({ error: "Roadmap not found in user data." }).code(404);
     }
 
     // Remove the roadmap from the roadmaps array
-    const updatedRoadmaps = roadmaps.filter((id) => id !== roadmapId);
+    const updatedRoadmaps = roadmaps.filter((roadmap) => roadmap.roadmapId !== roadmapId);
     await userRef.update({ roadmaps: updatedRoadmaps });
 
     return h.response({ message: "Roadmap deleted successfully." }).code(200);
   } catch (error) {
     console.error("Error deleting roadmap:", error);
     return h.response({ error: "Unable to delete roadmap." }).code(500);
+  }
+};
+
+// Get roadmap spesific subcourses
+const getAUserSubcourses = async (request, h) => {
+  try {
+    const userId = request.user.id; // Extract user ID from token
+    const { roadmapName, courseName } = request.params;
+
+    // Validate input values
+    if (!roadmapName || !courseName) {
+      return h.response({ error: "Missing or invalid roadmapName or courseName" }).code(400);
+    }
+
+    // Fetch user document
+    const userDoc = await db.collection("users").doc(userId).get();
+    if (!userDoc.exists) {
+      return h.response({ error: "User not found" }).code(404);
+    }
+
+    const userData = userDoc.data();
+    const userRoadmap = userData.roadmaps.find((r) => r.roadmapId === roadmapName);
+
+    if (!userRoadmap) {
+      return h.response({ error: "Roadmap not assigned to the user" }).code(404);
+    }
+
+    // Fetch roadmap from Firestore
+    const roadmapSnapshot = await db
+      .collection("roadmaps")
+      .where("jobRole", "==", roadmapName)
+      .get();
+
+    if (roadmapSnapshot.empty) {
+      return h.response({ error: "Roadmap not found in Firestore" }).code(404);
+    }
+
+    const roadmap = roadmapSnapshot.docs[0].data();
+
+    // Find the course in the roadmap
+    const course = roadmap.learningTopics.find((topic) => topic.name === courseName);
+
+    if (!course) {
+      return h.response({ error: "Course not found in the roadmap" }).code(404);
+    }
+
+    // Extract subcourses with required fields
+    const subcourses = course.subTopics.map((sub) => ({
+      subcourseName: sub.name,
+      description: sub.description,
+    }));
+
+    return h.response({ message: "Subcourses retrieved successfully.", subcourses }).code(200);
+  } catch (error) {
+    console.error("Error retrieving user subcourses:", error);
+    return h.response({ error: "Unable to fetch subcourses." }).code(500);
   }
 };
 
@@ -584,4 +663,5 @@ module.exports = {
   verifyOTP,
   sendQuesioner,
   deleteUserRoadmap,
+  getAUserSubcourses,
 };

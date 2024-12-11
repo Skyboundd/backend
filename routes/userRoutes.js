@@ -1,4 +1,4 @@
-const { deleteUser, registerUser, getAllUsers, loginUser, getUser, getUserStatus, assignAndSendRoadmap, getUserCourses, getUserSubCourse, requestOTP, verifyOTP, sendQuesioner, deleteUserRoadmap } = require('./handler');
+const { deleteUser, registerUser, getAllUsers, loginUser, getUser, getUserStatus, assignAndSendRoadmap, getUserCourses, getUserSubCourse, requestOTP, verifyOTP, sendQuesioner, deleteUserRoadmap, getAUserSubcourses } = require('./handler');
 const { verifyJwtToken } = require('../middlewares/authMiddleware');
 
 module.exports = [
@@ -137,11 +137,14 @@ module.exports = [
         handler: deleteUserRoadmap
     },
 
-    // Get All Roadmaps from roadmaps collection
+    // Get specific subcourse
     {
         method: 'GET',
-        path: '/roadmaps',
-        
-    }
+        path: '/user/{roadmapName}/{courseName}/subcourses',
+        options:
+        {
+            pre: [{ method: verifyJwtToken }], // Apply JWT middleware
+        },
+        handler: getAUserSubcourses
+    },
 ];
-
